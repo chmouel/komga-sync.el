@@ -4,7 +4,7 @@
 
 ;; Author: Chmouel Boudjnah <chmouel@chmouel.com>
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "29.1") (nov "0.4.0") (password-store "2.1.4"))
+;; Package-Requires: ((emacs "30.1") (nov "0.4.0") (password-store "2.1.4"))
 ;; Keywords: comm, hypermedia
 ;; URL: https://github.com/chmouel/komga-sync.el
 

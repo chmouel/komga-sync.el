@@ -12,7 +12,7 @@ the command line.
 
 ## Requirements
 
-- Emacs 29.1 or newer
+- Emacs 30.1 or newer
 - [`nov.el`](https://depp.brause.cc/nov.el/)
 - [`password-store`](https://github.com/DamienCassou/password-store)
 - `curl`
