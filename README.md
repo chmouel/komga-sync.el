@@ -52,7 +52,7 @@ configuration:
 | `komga-sync-server-url` | Komga server base URL | `nil` |
 | `komga-sync-api-key-entry` | `pass` entry containing the API key | `komga/api_key` |
 | `komga-sync-api-key-function` | Function that returns the API key | `komga-sync-api-key-from-pass` |
-| `komga-sync-state-directory` | Persistent book links and sync state | `~/Sync/emacs/komga-sync/` |
+| `komga-sync-state-directory` | Persistent book links and sync state | `komga-sync/` under `user-emacs-directory` |
 | `komga-sync-cache-directory` | Regenerable library index and device data | `$XDG_CACHE_HOME/komga-sync/` or `~/.cache/komga-sync/` |
 | `komga-sync-device-name` | Device name reported to Komga | `<hostname> (Emacs)` |
 | `komga-sync-idle-delay` | Idle seconds before an automatic push; `nil` disables it | `5` |

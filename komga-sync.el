@@ -112,7 +112,7 @@ memory only."
   :type 'function)
 
 (defcustom komga-sync-state-directory
-  (expand-file-name "~/Sync/emacs/komga-sync/")
+  (expand-file-name "komga-sync/" user-emacs-directory)
   "Directory holding the persistent link and sync state.
 This is small and worth syncing between machines."
   :type 'directory)
