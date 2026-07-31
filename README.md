@@ -1,7 +1,7 @@
 # komga-sync.el
 
 `komga-sync` keeps EPUB reading positions in Emacs `nov-mode` synchronized
-with a Komga server. It uses Komga's Readium progression API, so positions
+with a [Komga](https://komga.org/) server. It uses Komga's Readium progression API, so positions
 written by Emacs are available to Komga's web reader and other clients, and
 positions written elsewhere can be pulled back into Emacs.
 
