@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        emacs-version: ["29.1", "30.1", "snapshot"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: purcell/setup-emacs@master
+        with:
+          version: ${{ matrix.emacs-version }}
+      - name: Install package dependencies
+        run: |
+          emacs -Q --batch -l package \
+            --eval '(add-to-list '\''package-archives '\''("melpa" . "https://melpa.org/packages/"))' \
+            --eval '(package-refresh-contents)' \
+            --eval '(dolist (package '\''(nov password-store)) (package-install package))'
+      - run: make compile
+      - run: make test
