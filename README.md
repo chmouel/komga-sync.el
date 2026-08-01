@@ -60,7 +60,11 @@ configuration:
 | `komga-sync-push-on-exit` | Push when closing a buffer or Emacs | `t` |
 | `komga-sync-pull-on-open` | Handle differing remote progress with `prompt`, `auto`, `message`, or `nil` | `prompt` |
 | `komga-sync-auto-link` | Match unlinked EPUBs automatically | `t` |
+| `komga-sync-media-profile` | Media profile books must have; `nil` accepts comics and PDFs too | `EPUB` |
+| `komga-sync-libraries` | Libraries to search, as names or ids; `nil` searches all | `nil` |
+| `komga-sync-download-directory` | Directory where books are downloaded | `~/Downloads` |
 | `komga-sync-timeout` | Normal request timeout in seconds | `20` |
+| `komga-sync-download-timeout` | Book download timeout in seconds | `600` |
 | `komga-sync-exit-timeout` | Exit-time push timeout in seconds | `5` |
 | `komga-sync-debug` | Write request and decision details to the log buffer | `nil` |
 | `komga-sync-log-buffer` | Debug log buffer name | `*komga-sync-log*` |
@@ -73,8 +77,27 @@ configuration:
 | `komga-sync-pull` | Move to the reading position stored on Komga. |
 | `komga-sync-link-book` | Choose the Komga book matching the current EPUB. |
 | `komga-sync-unlink-book` | Forget the current EPUB's Komga link. |
+| `komga-sync-download-book` | Download a book from Komga into `komga-sync-download-directory`. |
 | `komga-sync-refresh-library-index` | Refresh the cached list used for matching. |
 | `komga-sync-status` | Report the current link, positions, and conflicts. |
+
+### Downloading books
+
+Run `M-x komga-sync-download-book` to choose a book from Komga and download
+it locally. Enter a search term, then select a book from the completion list.
+Leave the search term empty to choose from the cached library index; use a
+prefix argument (`C-u M-x komga-sync-download-book`) to refresh that index
+first.
+
+The file is saved in `komga-sync-download-directory` (by default,
+`~/Downloads`). Existing files require confirmation before they are replaced.
+An incomplete download is kept in a temporary file and is not installed as a
+book. After a successful download, the file is linked to its Komga book so
+that `komga-sync-mode` can restore and synchronize its reading position. The
+command then offers to open the downloaded EPUB.
+
+The `komga-sync-media-profile` and `komga-sync-libraries` settings also apply
+when choosing a book to download.
 
 ## Limitations
 

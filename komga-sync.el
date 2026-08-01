@@ -153,8 +153,34 @@ only reports it, and nil disables the check."
   "Whether to try to match unlinked EPUB files against Komga automatically."
   :type 'boolean)
 
+(defcustom komga-sync-media-profile "EPUB"
+  "Media profile a Komga book must have to be offered by this package.
+Komga serves comics and PDFs from the same endpoints as EPUBs, and only
+EPUBs can be read here.  Set to nil to consider every book."
+  :type '(choice (const :tag "EPUB only" "EPUB")
+                 (const :tag "PDF only" "PDF")
+                 (const :tag "Comics only (DIVINA)" "DIVINA")
+                 (string :tag "Other profile")
+                 (const :tag "Every book" nil)))
+
+(defcustom komga-sync-libraries nil
+  "Komga libraries to restrict searches to, given as names or ids.
+Nil searches every library the API key can see."
+  :type '(choice (const :tag "All libraries" nil)
+                 (repeat (string :tag "Library name or id"))))
+
+(defcustom komga-sync-download-directory "~/Downloads"
+  "Directory where `komga-sync-download-book' saves book files."
+  :type 'directory)
+
 (defcustom komga-sync-timeout 20
   "Timeout in seconds for requests to Komga."
+  :type 'number)
+
+(defcustom komga-sync-download-timeout 600
+  "Timeout in seconds for downloading a book file from Komga.
+Book files are large, so this is far more generous than
+`komga-sync-timeout'."
   :type 'number)
 
 (defcustom komga-sync-exit-timeout 5
@@ -199,6 +225,9 @@ would push the position just left back over the newer remote one.")
 
 (defvar komga-sync--library-index nil
   "Cached list of Komga books used for size based matching.")
+
+(defvar komga-sync--libraries nil
+  "Cached list of libraries on the server.  See `komga-sync--library-ids'.")
 
 (defvar komga-sync--idle-timer nil
   "Idle timer used for automatic pushes.")
@@ -444,19 +473,170 @@ assume anything about the environment."
     (if (= status 200) body
       (error "Komga returned %s for book %s" status book-id))))
 
+(defun komga-sync--all-libraries ()
+  "Return every library on the server, cached for the session."
+  (or komga-sync--libraries
+      (pcase-let ((`(,status . ,body)
+                   (komga-sync--request "GET" "/api/v1/libraries")))
+        (when (= status 200)
+          (setq komga-sync--libraries body)))))
+
+(defun komga-sync--library-ids ()
+  "Return the ids of the libraries named by `komga-sync-libraries'.
+Entries may be ids or names; names are resolved against the server.  An
+entry that resolves to nothing is passed through as an id, which is both
+what it most likely is and better than silently searching everything."
+  (when komga-sync-libraries
+    (let ((libraries (komga-sync--all-libraries)))
+      (mapcar
+       (lambda (entry)
+         (if (seq-find (lambda (l) (equal (alist-get 'id l) entry)) libraries)
+             entry
+           (or (alist-get 'id
+                          (seq-find (lambda (l)
+                                      (string-equal-ignore-case
+                                       (or (alist-get 'name l) "") entry))
+                                    libraries))
+               entry)))
+       komga-sync-libraries))))
+
+(defun komga-sync--library-query ()
+  "Return the query fragment restricting a request to `komga-sync-libraries'."
+  (mapconcat (lambda (id) (concat "&library_id=" (url-hexify-string id)))
+             (komga-sync--library-ids) ""))
+
+(defun komga-sync--book-wanted-p (book)
+  "Return non-nil when BOOK matches `komga-sync-media-profile'.
+Books whose profile the server does not report are kept: older Komga
+versions omit the field, and hiding the whole library would be worse
+than occasionally offering a comic."
+  (let ((profile (alist-get 'mediaProfile (alist-get 'media book))))
+    (or (null komga-sync-media-profile)
+        (null profile)
+        (string-equal-ignore-case profile komga-sync-media-profile))))
+
+(defun komga-sync--filter-books (books)
+  "Return the entries of BOOKS matching `komga-sync-media-profile'."
+  (seq-filter #'komga-sync--book-wanted-p books))
+
 (defun komga-sync--search-books (query)
   "Return Komga books matching QUERY."
   (pcase-let ((`(,status . ,body)
                (komga-sync--request
-                "GET" (format "/api/v1/books?size=50&search=%s"
-                              (url-hexify-string query)))))
-    (when (= status 200) (alist-get 'content body))))
+                "GET" (format "/api/v1/books?size=50&search=%s%s"
+                              (url-hexify-string query)
+                              (komga-sync--library-query)))))
+    (when (= status 200)
+      (komga-sync--filter-books (alist-get 'content body)))))
 
 (defun komga-sync--all-books ()
   "Return every book on the server.  Used for size based matching."
   (pcase-let ((`(,status . ,body)
-               (komga-sync--request "GET" "/api/v1/books?unpaged=true")))
-    (when (= status 200) (alist-get 'content body))))
+               (komga-sync--request
+                "GET" (concat "/api/v1/books?unpaged=true"
+                              (komga-sync--library-query)))))
+    (when (= status 200)
+      (komga-sync--filter-books (alist-get 'content body)))))
+
+
+;;;; Downloading a book file
+;;
+;; The request helpers above parse the whole answer into memory as JSON,
+;; which a multi megabyte book file is not.  Downloads therefore drive
+;; curl directly, sharing only the config document that carries the API
+;; key on stdin so it never reaches the process list.
+
+(defun komga-sync--download-file-name (book)
+  "Return the file name to save BOOK under.
+Taken from the server side path, falling back to the book name and then
+to its id.  Any directory part is dropped: the server chooses this
+string, and it must not be able to steer the write out of
+`komga-sync-download-directory'."
+  (let* ((id (alist-get 'id book))
+         (candidates (list (alist-get 'url book)
+                           (alist-get 'name book)))
+         (name (seq-some
+                (lambda (candidate)
+                  (when (stringp candidate)
+                    (let ((base (file-name-nondirectory
+                                 (directory-file-name
+                                  (replace-regexp-in-string
+                                   "[\0\\\\]" "" candidate)))))
+                      (unless (member base '("" "." ".."))
+                        base))))
+                candidates)))
+    (or name (format "%s.epub" id))))
+
+(defun komga-sync--download-target (book)
+  "Return the absolute path `komga-sync-download-book' would save BOOK to."
+  (expand-file-name (komga-sync--download-file-name book)
+                    (file-name-as-directory
+                     (expand-file-name komga-sync-download-directory))))
+
+(defun komga-sync--download-args (book-id out-file)
+  "Return curl arguments fetching BOOK-ID's file into OUT-FILE.
+The status code is written to stdout.  Redirects are followed because
+Komga may serve the file from another location."
+  (list "-q" "--config" "-" "-sS" "-L"
+        "--max-time" (number-to-string komga-sync-download-timeout)
+        "-o" out-file "-w" "%{http_code}"
+        "-X" "GET"
+        (komga-sync--url (format "/api/v1/books/%s/file" book-id))))
+
+(defun komga-sync--download-async (book-id file callback)
+  "Download BOOK-ID's file to FILE and call CALLBACK with the HTTP status.
+The transfer goes to a temporary file next to FILE and is only moved
+into place on success, so an interrupted download never leaves something
+that looks like a book behind.  CALLBACK is called with nil when the
+process was killed rather than finished."
+  (let* ((directory (file-name-directory file))
+         (temp (make-temp-file (expand-file-name ".komga-sync-download-"
+                                                 directory)))
+         (config (komga-sync--curl-config))
+         (args (komga-sync--download-args book-id temp))
+         (stdout (generate-new-buffer " *komga-sync-download*")))
+    (let ((proc (make-process
+                 :name "komga-sync-download"
+                 :buffer stdout
+                 :command (cons "curl" args)
+                 :noquery t
+                 :connection-type 'pipe
+                 :sentinel
+                 (lambda (proc _event)
+                   (unless (process-live-p proc)
+                     (unwind-protect
+                         (let ((status
+                                (when (eq (process-status proc) 'exit)
+                                  (string-to-number
+                                   (string-trim
+                                    (with-current-buffer stdout
+                                      (buffer-string)))))))
+                           (komga-sync--log "download %s -> %s" book-id status)
+                           (when (eql status 200)
+                             (rename-file temp file t))
+                           (komga-sync--safely "download"
+                             (funcall callback status)))
+                       (when (buffer-live-p stdout) (kill-buffer stdout))
+                       (ignore-errors (delete-file temp))))))))
+      (process-send-string proc config)
+      (process-send-eof proc)
+      proc)))
+
+(defun komga-sync--read-book (&optional refresh)
+  "Prompt for a book on Komga and return its alist.
+A search term queries the server; empty input offers the cached library
+index instead, refetching it when REFRESH is non-nil."
+  (let* ((query (read-string "Search Komga for (empty for all): "))
+         (books (if (string-empty-p (string-trim query))
+                    (komga-sync--library-index refresh)
+                  (komga-sync--search-books query))))
+    (unless books
+      (user-error "No book on Komga matches %S" query))
+    (let* ((choices (mapcar (lambda (b)
+                              (cons (komga-sync--describe-book b) b))
+                            books))
+           (choice (completing-read "Komga book: " choices nil t)))
+      (cdr (assoc choice choices)))))
 
 
 ;;;; Persistent state
@@ -1288,6 +1468,37 @@ approximately and pushes may be refused"
           komga-sync--conflict nil
           komga-sync--mismatch nil)
     (message "komga-sync: unlinked %s" (file-name-nondirectory path))))
+
+;;;###autoload
+(defun komga-sync-download-book (&optional refresh)
+  "Download a book from Komga into `komga-sync-download-directory'.
+Prompts for a search term; empty input offers every book in the cached
+library index, which REFRESH, given interactively as a prefix argument,
+refetches first.  The downloaded file is linked to its Komga book, so
+`komga-sync-mode' picks up where the server left off when it is opened."
+  (interactive "P")
+  (let* ((book (komga-sync--read-book refresh))
+         (book-id (alist-get 'id book))
+         (file (komga-sync--download-target book))
+         (directory (file-name-directory file)))
+    (make-directory directory t)
+    (when (and (file-exists-p file)
+               (not (y-or-n-p (format "%s exists; overwrite? " file))))
+      (user-error "Download cancelled"))
+    (message "komga-sync: downloading %s…" (file-name-nondirectory file))
+    (komga-sync--download-async
+     book-id file
+     (lambda (status)
+       (cond
+        ((null status) (message "komga-sync: download of %s was interrupted"
+                                (file-name-nondirectory file)))
+        ((= status 200)
+         (komga-sync--book-remember file (komga-sync--content-key file) book-id)
+         (message "komga-sync: saved %s" file)
+         (when (y-or-n-p (format "Open %s? " (file-name-nondirectory file)))
+           (find-file file)))
+        (t (message "komga-sync: Komga returned %s downloading %s"
+                    status book-id)))))))
 
 ;;;###autoload
 (defun komga-sync-refresh-library-index ()

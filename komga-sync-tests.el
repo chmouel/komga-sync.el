@@ -457,6 +457,78 @@
 
 ;;;; Regressions
 
+(ert-deftest komga-sync-test-media-profile-filter ()
+  (let ((books '(((id . "A") (media . ((mediaProfile . "EPUB"))))
+                 ((id . "B") (media . ((mediaProfile . "DIVINA"))))
+                 ((id . "C") (media . ((mediaProfile . "PDF")))))))
+    (let ((komga-sync-media-profile "EPUB"))
+      (should (equal (mapcar (lambda (b) (alist-get 'id b))
+                             (komga-sync--filter-books books))
+                     '("A"))))
+    (let ((komga-sync-media-profile nil))
+      (should (= (length (komga-sync--filter-books books)) 3)))))
+
+(ert-deftest komga-sync-test-unreported-profile-is-kept ()
+  "Older Komga versions omit the profile; hiding everything is worse."
+  (let ((komga-sync-media-profile "EPUB")
+        (books '(((id . "A") (media . ((pagesCount . 10)))))))
+    (should (= (length (komga-sync--filter-books books)) 1))))
+
+(ert-deftest komga-sync-test-library-query ()
+  (let ((komga-sync--libraries '(((id . "1") (name . "Books"))
+                                 ((id . "2") (name . "Comics")))))
+    (let ((komga-sync-libraries nil))
+      (should (equal (komga-sync--library-query) "")))
+    ;; Names are resolved, ids are kept, unknown entries pass through.
+    (let ((komga-sync-libraries '("books")))
+      (should (equal (komga-sync--library-query) "&library_id=1")))
+    (let ((komga-sync-libraries '("2")))
+      (should (equal (komga-sync--library-query) "&library_id=2")))
+    (let ((komga-sync-libraries '("Books" "2")))
+      (should (equal (komga-sync--library-query)
+                     "&library_id=1&library_id=2")))
+    (let ((komga-sync-libraries '("a b")))
+      (should (equal (komga-sync--library-query) "&library_id=a%20b")))))
+
+(ert-deftest komga-sync-test-download-file-name-from-url ()
+  (should (equal (komga-sync--download-file-name
+                  '((id . "A") (url . "/books/dir/Some Book.epub")
+                    (name . "Some Book")))
+                 "Some Book.epub")))
+
+(ert-deftest komga-sync-test-download-file-name-falls-back ()
+  (should (equal (komga-sync--download-file-name
+                  '((id . "A") (name . "Some Book.epub")))
+                 "Some Book.epub"))
+  (should (equal (komga-sync--download-file-name '((id . "A"))) "A.epub"))
+  ;; A name made only of directory syntax carries no usable basename.
+  (should (equal (komga-sync--download-file-name '((id . "A") (url . "/")))
+                 "A.epub")))
+
+(ert-deftest komga-sync-test-download-file-name-cannot-escape ()
+  "The server chooses this string, so it must not steer the write."
+  (dolist (url '("../../etc/passwd" "/etc/passwd" ".." "."
+                 "a/../../b.epub" "evil\0.epub"))
+    (let ((name (komga-sync--download-file-name `((id . "A") (url . ,url)))))
+      (should-not (string-match-p "/" name))
+      (should-not (member name '("." "..")))
+      (should-not (string-match-p "\0" name)))))
+
+(ert-deftest komga-sync-test-download-target-uses-the-directory ()
+  (let* ((komga-sync-download-directory "/tmp/komga-sync-test-downloads")
+         (target (komga-sync--download-target
+                  '((id . "A") (url . "/books/Some Book.epub")))))
+    (should (equal target "/tmp/komga-sync-test-downloads/Some Book.epub"))))
+
+(ert-deftest komga-sync-test-download-args-keep-key-off-argv ()
+  (let ((komga-sync-server-url "https://example.com"))
+    (let ((args (komga-sync--download-args "A" "/tmp/o")))
+      (should (equal (car args) "-q"))
+      (should (member "--config" args))
+      (should (member "%{http_code}" args))
+      (should (member "https://example.com/api/v1/books/A/file" args))
+      (should-not (seq-find (lambda (a) (string-match-p "X-API-Key" a)) args)))))
+
 (ert-deftest komga-sync-test-apply-locator-in-undisplayed-buffer ()
   "Applying a locator must work when the buffer is not on screen.
 The asynchronous pull runs from a process sentinel, where the target
