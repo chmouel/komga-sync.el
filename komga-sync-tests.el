@@ -667,6 +667,27 @@ buffer is frequently not the one displayed in the selected window."
 
 ;;;; Teardown
 
+(ert-deftest komga-sync-test-mode-waits-for-nov-initialization ()
+  "Desktop must not enable sync on a partially initialized nov buffer."
+  (with-temp-buffer
+    (setq-local nov-documents nil)
+    (setq-local nov-documents-index 0)
+    (setq-local komga-sync--book-id "BOOK1")
+    (let ((komga-sync-idle-delay nil)
+          (komga-sync-pull-on-open t)
+          requested)
+      (cl-letf (((symbol-function 'derived-mode-p) (lambda (&rest _) t))
+                ((symbol-function 'komga-sync--request-async)
+                 (lambda (&rest _) (setq requested t))))
+        (komga-sync-mode 1)
+        (should-not komga-sync-mode)
+        (should-not requested)
+        (should-not (memq #'komga-sync--kill-buffer kill-buffer-hook))))))
+
+(ert-deftest komga-sync-test-nov-ready-with-current-document ()
+  (komga-sync-tests--with-book
+    (should (komga-sync--nov-ready-p))))
+
 (ert-deftest komga-sync-test-teardown-removes-global-hooks ()
   "Disabling the last buffer must not leave advice or timers behind."
   (komga-sync-tests--with-book

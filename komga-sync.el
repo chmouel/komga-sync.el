@@ -1536,6 +1536,13 @@ re-link with komga-sync-link-book or put this exact file on Komga" href)
 
 ;;;; Minor mode
 
+(defun komga-sync--nov-ready-p ()
+  "Return non-nil when nov has a current document ready to sync."
+  (and (vectorp nov-documents)
+       (integerp nov-documents-index)
+       (<= 0 nov-documents-index)
+       (< nov-documents-index (length nov-documents))))
+
 (defun komga-sync--other-mode-buffers-p ()
   "Return non-nil when another live buffer still has the mode enabled."
   (seq-find (lambda (buffer)
@@ -1557,17 +1564,24 @@ re-link with komga-sync-link-book or put this exact file on Komga" href)
   "Keep this EPUB's reading position in sync with Komga."
   :lighter " Komga"
   (if komga-sync-mode
-      (progn
-        (unless (derived-mode-p 'nov-mode)
-          (setq komga-sync-mode nil)
-          (user-error "The komga-sync minor mode only works in `nov-mode' buffers"))
+      (cond
+       ((not (derived-mode-p 'nov-mode))
+        (setq komga-sync-mode nil)
+        (user-error "The komga-sync minor mode only works in `nov-mode' buffers"))
+       ((not (komga-sync--nov-ready-p))
+        ;; Desktop can restore saved minor modes even when `nov-mode'
+        ;; failed partway through opening the EPUB.  Leave sync disabled;
+        ;; a successful `nov-mode' run will invoke its hook again.
+        (setq komga-sync-mode nil)
+        (komga-sync--log "not enabling sync before nov finished initialization"))
+       (t
         (komga-sync--ensure-idle-timer)
         (add-hook 'kill-buffer-hook #'komga-sync--kill-buffer nil t)
         (add-hook 'kill-emacs-hook #'komga-sync--kill-emacs)
         (advice-add 'nov-goto-document :before #'komga-sync--before-goto-document)
         (setq komga-sync--pushed-position (cons nov-documents-index (point)))
         (when komga-sync-pull-on-open
-          (komga-sync--safely "pull on open" (komga-sync--pull-async))))
+          (komga-sync--safely "pull on open" (komga-sync--pull-async)))))
     (komga-sync--invalidate)
     (remove-hook 'kill-buffer-hook #'komga-sync--kill-buffer t)
     (komga-sync--teardown)))
